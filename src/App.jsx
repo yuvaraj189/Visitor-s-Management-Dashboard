@@ -1,8 +1,8 @@
 import { useState } from 'react'
 import { BrowserRouter as Router, Routes, Route } from "react-router-dom";
-import VisitorSignup from "./pages/VisitorSignup";
-import AdminLogin from "./pages/AdminLogin";
-import AdminDashboard from "./pages/AdminDashboard";
+import VisitorSignup from "./pages/visitorsignup";
+import AdminLogin from "./pages/adminlogin";
+import AdminDashboard from "./pages/admindashboard";
 import Navbar from "./components/Navbar";
 import './App.css'
 
