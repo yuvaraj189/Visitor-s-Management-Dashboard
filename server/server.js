@@ -7,6 +7,8 @@ const jwt = require('jsonwebtoken');
 const moment = require('moment');
 const ExcelJS = require('exceljs');
 const PDFDocument = require('pdfkit');
+const nodemailer = require('nodemailer');
+const qrcode = require('qrcode');
 
 dotenv.config();
 
@@ -33,6 +35,54 @@ pool.getConnection((err, connection) => {
   console.log('Connected to MySQL database');
   connection.release();
 });
+const transporter = nodemailer.createTransport({
+  service: 'gmail',
+  auth: {
+    user: process.env.EMAIL_USER,
+    pass: process.env.EMAIL_PASS,
+  },
+});
+
+const otpStore = new Map();
+
+// Send OTP
+app.post('/api/otp/send', (req, res) => {
+  const { email } = req.body;
+  if (!email) return res.status(400).json({ message: 'Email is required' });
+
+  const otp = Math.floor(100000 + Math.random() * 900000).toString();
+  otpStore.set(email, otp);
+
+  setTimeout(() => otpStore.delete(email), 5 * 60 * 1000);
+
+  transporter.sendMail({
+    from: process.env.EMAIL_USER,
+    to: email,
+    subject: 'Your OTP Code',
+    text: `Your OTP code is: ${otp}`,
+  }, (err) => {
+    if (err) {
+      console.error('Email error:', err);
+      return res.status(500).json({ message: 'Failed to send OTP' });
+    }
+    res.json({ message: 'OTP sent to email' });
+  });
+});
+
+// Verify OTP
+app.post('/api/otp/verify', (req, res) => {
+  const { email, otp } = req.body;
+  if (!email || !otp) return res.status(400).json({ message: 'Email and OTP are required' });
+
+  const validOtp = otpStore.get(email);
+  if (validOtp === otp) {
+    otpStore.delete(email);
+    res.json({ verified: true, message: 'OTP verified successfully' });
+  } else {
+    res.status(401).json({ verified: false, message: 'Invalid or expired OTP' });
+  }
+});
+
 
 // Admin Login Route
 app.post('/api/admin/login', (req, res) => {
@@ -67,35 +117,40 @@ const verifyToken = (req, res, next) => {
 // Visitor Sign-Up Route
 app.post('/api/visitors/signup', (req, res) => {
   const {
-    visitor_name,
-    id_number,
-    id_type,
-    vehicle_type,
-    vehicle_number,
-    number_of_visitors,
-    in_time,
-    duration_minutes,
-    visit_date,
-  } = req.body;
+  visitor_name,
+  id_number,
+  id_type,
+  email,
+  vehicle_type,
+  vehicle_number,
+  number_of_visitors,
+  in_time,
+  duration_minutes,
+  visit_date,
+} = req.body;
 
-  if (
-    !visitor_name ||
-    !id_number ||
-    !id_type ||
-    !vehicle_type ||
-    !vehicle_number ||
-    !number_of_visitors ||
-    !in_time ||
-    !duration_minutes ||
-    !visit_date
-  ) {
-    return res.status(400).json({ message: 'All fields are required.' });
-  }
+if (
+  !visitor_name ||
+  !id_number ||
+  !id_type ||
+  !vehicle_type ||
+  !vehicle_number ||
+  !number_of_visitors ||
+  !in_time ||
+  !duration_minutes ||
+  !visit_date ||
+  !email
+) {
+  return res.status(400).json({ message: 'All fields are required.' });
+}
 
   const panRegex = /^[A-Z]{5}[0-9]{4}[A-Z]{1}$/;
   const aadhaarRegex = /^[2-9]{1}[0-9]{11}$/;
   const vehicleRegex = /^[A-Z]{2}[0-9]{2}[A-Z]{1,2}[0-9]{4}$/;
-
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+if (!emailRegex.test(email)) {
+  return res.status(400).json({ message: 'Invalid email format.' });
+}
   if (id_type === 'PAN' && !panRegex.test(id_number)) {
     return res.status(400).json({ message: 'Invalid PAN number format.' });
   }
@@ -122,20 +177,21 @@ app.post('/api/visitors/signup', (req, res) => {
 
   pool.query(
     `INSERT INTO visitors 
-      (visitor_name, id_type, id_number, vehicle_type, vehicle_number, number_of_visitors, in_time, duration_minutes, visit_date, expected_out_time, status) 
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')`,
-    [
-      visitor_name,
-      id_type,
-      id_number,
-      vehicle_type,
-      vehicle_number,
-      number_of_visitors,
-      in_time,
-      duration_minutes,
-      visit_date,
-      expected_out_time,
-    ],
+     (visitor_name, id_type, id_number, email, vehicle_type, vehicle_number, number_of_visitors, in_time, duration_minutes, visit_date, expected_out_time, status)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')`,
+   [
+  visitor_name,
+  id_type,
+  id_number,
+  email,
+  vehicle_type,
+  vehicle_number,
+  number_of_visitors,
+  in_time,
+  duration_minutes,
+  visit_date,
+  expected_out_time,
+   ],
     (err, result) => {
       if (err) {
         console.error(err);
@@ -246,7 +302,13 @@ app.get('/api/visitor/slip/:id', verifyToken, (req, res) => {
     doc.text(`Visit Date: ${visitor.visit_date}`);
     doc.text(`Expected Out Time: ${visitor.expected_out_time}`);
     doc.text(`Status: ${visitor.status}`);
-
+    const qrData = `Visitor: ${visitor.visitor_name}, In Time: ${visitor.in_time}, Out Time: ${visitor.expected_out_time}`;
+qrcode.toDataURL(qrData, (err, qrUrl) => {
+  if (!err) {
+    doc.image(qrUrl, { fit: [100, 100], align: 'center' });
+  }
+  doc.end();
+});
     doc.end();
   });
 });
